@@ -91,7 +91,7 @@ func (t *Template) checkCanParse() error {
 }
 
 // escape escapes all associated templates.
-func (t *Template) escape() error {
+func (t *Template) escape(data interface{}) error {
 	t.nameSpace.mu.Lock()
 	defer t.nameSpace.mu.Unlock()
 	t.nameSpace.escaped = true
@@ -99,7 +99,7 @@ func (t *Template) escape() error {
 		if t.Tree == nil {
 			return fmt.Errorf("template: %q is an incomplete or empty template", t.Name())
 		}
-		if err := escapeTemplate(t, t.text.Root, t.Name()); err != nil {
+		if err := escapeTemplate(t, t.text.Root, t.Name(), data); err != nil {
 			return err
 		}
 	} else if t.escapeErr != escapeOK {
@@ -116,7 +116,7 @@ func (t *Template) escape() error {
 // A template may be executed safely in parallel, although if parallel
 // executions share a Writer the output may be interleaved.
 func (t *Template) Execute(wr io.Writer, data interface{}) error {
-	if err := t.escape(); err != nil {
+	if err := t.escape(data); err != nil {
 		return err
 	}
 	return t.text.Execute(wr, data)
@@ -158,7 +158,7 @@ func (t *Template) lookupAndEscapeTemplate(name string) (tmpl *Template, err err
 		panic("html/template internal error: template escaping out of sync")
 	}
 	if tmpl.escapeErr == nil {
-		err = escapeTemplate(tmpl, tmpl.text.Root, name)
+		err = escapeTemplate(tmpl, tmpl.text.Root, name, nil)
 	}
 	return tmpl, err
 }
