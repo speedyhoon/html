@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"reflect"
+	"strings"
 	"github.com/speedyhoon/text/template"
 	"github.com/speedyhoon/text/template/parse"
 )
@@ -18,8 +20,8 @@ import (
 // templates is properly escaped. If no error is returned, then the named templates have
 // been modified. Otherwise the named templates have been rendered
 // unusable.
-func escapeTemplate(tmpl *Template, node parse.Node, name string) error {
-	c, _ := tmpl.esc.escapeTree(context{}, node, name, 0)
+func escapeTemplate(tmpl *Template, node parse.Node, name string, data interface{}) error {
+	c, _ := tmpl.esc.escapeTree(context{}, node, name, 0, data)
 	var err error
 	if c.err != nil {
 		err, c.err.Name = c.err, name
@@ -119,22 +121,22 @@ func makeEscaper(n *nameSpace) escaper {
 const filterFailsafe = "ZgotmplZ"
 
 // escape escapes a template node.
-func (e *escaper) escape(c context, n parse.Node) context {
+func (e *escaper) escape(c context, n parse.Node, data interface{}) context {
 	switch n := n.(type) {
 	case *parse.ActionNode:
 		return e.escapeAction(c, n)
 	case *parse.IfNode:
-		return e.escapeBranch(c, &n.BranchNode, "if")
+		return e.escapeBranch(c, &n.BranchNode, "if", data)
 	case *parse.ListNode:
-		return e.escapeList(c, n)
+		return e.escapeList(c, n, data)
 	case *parse.RangeNode:
-		return e.escapeBranch(c, &n.BranchNode, "range")
+		return e.escapeBranch(c, &n.BranchNode, "range", data)
 	case *parse.TemplateNode:
-		return e.escapeTemplate(c, n)
+		return e.escapeTemplate(c, n, data)
 	case *parse.TextNode:
 		return e.escapeText(c, n)
 	case *parse.WithNode:
-		return e.escapeBranch(c, &n.BranchNode, "with")
+		return e.escapeBranch(c, &n.BranchNode, "with", data)
 	}
 	panic("escaping " + n.String() + " is unimplemented")
 }
@@ -454,13 +456,13 @@ func join(a, b context, node parse.Node, nodeName string) context {
 }
 
 // escapeBranch escapes a branch template node: "if", "range" and "with".
-func (e *escaper) escapeBranch(c context, n *parse.BranchNode, nodeName string) context {
-	c0 := e.escapeList(c, n.List)
+func (e *escaper) escapeBranch(c context, n *parse.BranchNode, nodeName string, data interface{}) context {
+	c0 := e.escapeList(c, n.List, data)
 	if nodeName == "range" && c0.state != stateError {
 		// The "true" branch of a "range" node can execute multiple times.
 		// We check that executing n.List once results in the same context
 		// as executing n.List twice.
-		c1, _ := e.escapeListConditionally(c0, n.List, nil)
+		c1, _ := e.escapeListConditionally(c0, n.List, nil, data)
 		c0 = join(c0, c1, n, nodeName)
 		if c0.state == stateError {
 			// Make clear that this is a problem on loop re-entry
@@ -471,17 +473,17 @@ func (e *escaper) escapeBranch(c context, n *parse.BranchNode, nodeName string) 
 			return c0
 		}
 	}
-	c1 := e.escapeList(c, n.ElseList)
+	c1 := e.escapeList(c, n.ElseList, data)
 	return join(c0, c1, n, nodeName)
 }
 
 // escapeList escapes a list template node.
-func (e *escaper) escapeList(c context, n *parse.ListNode) context {
+func (e *escaper) escapeList(c context, n *parse.ListNode, data interface{}) context {
 	if n == nil {
 		return c
 	}
 	for _, m := range n.Nodes {
-		c = e.escape(c, m)
+		c = e.escape(c, m, data)
 	}
 	return c
 }
@@ -490,13 +492,13 @@ func (e *escaper) escapeList(c context, n *parse.ListNode) context {
 // inferences in e if the inferences and output context satisfy filter.
 // It returns the best guess at an output context, and the result of the filter
 // which is the same as whether e was updated.
-func (e *escaper) escapeListConditionally(c context, n *parse.ListNode, filter func(*escaper, context) bool) (context, bool) {
+func (e *escaper) escapeListConditionally(c context, n *parse.ListNode, filter func(*escaper, context) bool, data interface{}) (context, bool) {
 	e1 := makeEscaper(e.ns)
 	// Make type inferences available to f.
 	for k, v := range e.output {
 		e1.output[k] = v
 	}
-	c = e1.escapeList(c, n)
+	c = e1.escapeList(c, n, data)
 	ok := filter != nil && filter(&e1, c)
 	if ok {
 		// Copy inferences and edits from e1 back into e.
@@ -523,8 +525,8 @@ func (e *escaper) escapeListConditionally(c context, n *parse.ListNode, filter f
 }
 
 // escapeTemplate escapes a {{template}} call node.
-func (e *escaper) escapeTemplate(c context, n *parse.TemplateNode) context {
-	c, name := e.escapeTree(c, n, n.Name, n.Line)
+func (e *escaper) escapeTemplate(c context, n *parse.TemplateNode, data interface{}) context {
+	c, name := e.escapeTree(c, n, n.Name, n.Line, data)
 	if name != n.Name {
 		e.editTemplateNode(n, name)
 	}
@@ -533,7 +535,12 @@ func (e *escaper) escapeTemplate(c context, n *parse.TemplateNode) context {
 
 // escapeTree escapes the named template starting in the given context as
 // necessary and returns its output context.
-func (e *escaper) escapeTree(c context, node parse.Node, name string, line int) (context, string) {
+func (e *escaper) escapeTree(c context, node parse.Node, name string, line int, data interface{}) (context, string) {
+	if n := strings.TrimPrefix(name, "."); n != name && data != nil {
+		if value := reflect.ValueOf(data).FieldByName(n); value.IsValid() {
+			name = value.String()
+		}
+	}
 	// Mangle the template name with the input context to produce a reliable
 	// identifier.
 	dname := c.mangle(name)
@@ -568,17 +575,17 @@ func (e *escaper) escapeTree(c context, node parse.Node, name string, line int) 
 		}
 		t = dt
 	}
-	return e.computeOutCtx(c, t), dname
+	return e.computeOutCtx(c, t, data), dname
 }
 
 // computeOutCtx takes a template and its start context and computes the output
 // context while storing any inferences in e.
-func (e *escaper) computeOutCtx(c context, t *template.Template) context {
+func (e *escaper) computeOutCtx(c context, t *template.Template, data interface{}) context {
 	// Propagate context over the body.
-	c1, ok := e.escapeTemplateBody(c, t)
+	c1, ok := e.escapeTemplateBody(c, t, data)
 	if !ok {
 		// Look for a fixed point by assuming c1 as the output context.
-		if c2, ok2 := e.escapeTemplateBody(c1, t); ok2 {
+		if c2, ok2 := e.escapeTemplateBody(c1, t, data); ok2 {
 			c1, ok = c2, true
 		}
 		// Use c1 as the error context if neither assumption worked.
@@ -595,7 +602,7 @@ func (e *escaper) computeOutCtx(c context, t *template.Template) context {
 // escapeTemplateBody escapes the given template assuming the given output
 // context, and returns the best guess at the output context and whether the
 // assumption was correct.
-func (e *escaper) escapeTemplateBody(c context, t *template.Template) (context, bool) {
+func (e *escaper) escapeTemplateBody(c context, t *template.Template, data interface{}) (context, bool) {
 	filter := func(e1 *escaper, c1 context) bool {
 		if c1.state == stateError {
 			// Do not update the input escaper, e.
@@ -614,7 +621,7 @@ func (e *escaper) escapeTemplateBody(c context, t *template.Template) (context, 
 	// Naively assuming that the input context is the same as the output
 	// works >90% of the time.
 	e.output[t.Name()] = c
-	return e.escapeListConditionally(c, t.Tree.Root, filter)
+	return e.escapeListConditionally(c, t.Tree.Root, filter, data)
 }
 
 // delimEnds maps each delim to a string of characters that terminate it.
