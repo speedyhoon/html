@@ -1,11 +1,11 @@
-# text/template
+# html/template
 Dynamically load sub templates with {{template .MyVariable}}. Forked from Go's built in library "text/template" version 1.9.2.
 
-[![Build Status](https://travis-ci.org/speedyhoon/text.svg?branch=master)](https://travis-ci.org/speedyhoon/text)
-[![go report card](https://goreportcard.com/badge/github.com/speedyhoon/text)](https://goreportcard.com/report/github.com/speedyhoon/text)
+[![Build Status](https://travis-ci.org/speedyhoon/html.svg?branch=master)](https://travis-ci.org/speedyhoon/html)
+[![go report card](https://goreportcard.com/badge/github.com/speedyhoon/html)](https://goreportcard.com/report/github.com/speedyhoon/html)
 
 ```
 import (
-	"github.com/speedyhoon/text/template"
+	"github.com/speedyhoon/html/template"
 )
 ```
