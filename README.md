@@ -40,12 +40,7 @@ func main() {
 		Data: "Four, Five, Six.",
 	}
 
-	t, err := template.New("page").Parse(tpl)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = t.Execute(os.Stdout, data)
+	err := template.Must(template.New("page").Parse(tpl)).Execute(os.Stdout, data)
 	if err != nil {
 		log.Fatal(err)
 	}
